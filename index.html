@@ -15,6 +15,9 @@
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.Default.css" />
     <script src="https://unpkg.com/leaflet.markercluster@1.4.1/dist/leaflet.markercluster.js"></script>
     
+    <!-- Librería para generar EXCEL (SheetJS) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    
     <!-- Librerías de Gráficas y React -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
@@ -41,6 +44,9 @@
         
         @keyframes pulse-soft { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.8; transform: scale(1.05); } }
         .animate-pulse-soft { animation: pulse-soft 3s infinite; }
+
+        /* Estilo Sugerencias Autocompletado */
+        .suggestion-item:hover { background-color: #f1f5f9; border-left: 4px solid #055A1C; }
     </style>
 </head>
 <body>
@@ -51,9 +57,6 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // ==========================================
-        // CONFIGURACIÓN DE FIREBASE (EXTERNA)
-        // ==========================================
         const manualConfig = {
             apiKey: "AIzaSyA-t9j1S1B1h7OXSnm90jfP6tSKDg5bm9Y",
             authDomain: "catalogo-clues-slp.firebaseapp.com",
@@ -64,19 +67,24 @@
             measurementId: "G-WPETZEBSX7"
         };
 
-        const firebaseConfig = typeof __firebase_config !== 'undefined' 
-            ? JSON.parse(__firebase_config) 
-            : manualConfig;
-
-        // Definición de appId (usamos minúsculas para coincidir con el resto del código)
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : manualConfig;
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'catalogo-clues-slp'; 
 
-        // Inicializar Firebase
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
 
-        // --- Componentes de Interfaz ---
+        // --- Utilidades de Limpieza ---
+        const cleanObject = (obj) => {
+            const newObj = {};
+            for (let key in obj) {
+                const cleanKey = key.trim().toUpperCase();
+                newObj[cleanKey] = (typeof obj[key] === 'string') ? obj[key].trim() : obj[key];
+            }
+            return newObj;
+        };
+
+        // --- Componentes ---
 
         const StatCard = ({ title, value, icon, colorClass = "text-[#055A1C]" }) => (
             <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 flex items-center hover:shadow-lg transition-all transform hover:-translate-y-1">
@@ -88,20 +96,6 @@
             </div>
         );
 
-        const ContactCard = ({ name, position, email, initials }) => (
-            <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6 flex items-center space-x-5 hover:border-[#055A1C]/40 transition-all group">
-                <div className="shrink-0 w-16 h-16 bg-gradient-to-br from-[#055A1C] to-[#044a17] rounded-2xl flex items-center justify-center text-white font-black text-2xl shadow-lg">{initials}</div>
-                <div className="flex-grow min-w-0">
-                    <h3 className="text-base font-black text-gray-800 truncate group-hover:text-[#055A1C]">{name}</h3>
-                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-tight mb-2 leading-tight">{position}</p>
-                    <a href={`mailto:${email}`} className="flex items-center text-[#055A1C] hover:text-[#e6007e] text-xs font-bold transition-colors">
-                        <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
-                        <span className="truncate">{email}</span>
-                    </a>
-                </div>
-            </div>
-        );
-
         const MapView = ({ data, resources, onMarkerClick }) => {
             const mapRef = React.useRef(null);
             const markerLayerRef = React.useRef(null);
@@ -109,15 +103,13 @@
             React.useEffect(() => {
                 if (!mapRef.current) {
                     mapRef.current = L.map('map', { center: [22.15, -100.98], zoom: 8 });
-                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { 
-                        attribution: '&copy; OpenStreetMap' 
-                    }).addTo(mapRef.current);
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(mapRef.current);
                 }
             }, []);
 
             React.useEffect(() => {
                 if (markerLayerRef.current) mapRef.current.removeLayer(markerLayerRef.current);
-                if (data) {
+                if (data && data.length > 0) {
                     const markers = L.markerClusterGroup({ showCoverageOnHover: false });
                     const icon = L.divIcon({
                         html: `<div style="background-color: #EA4335; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 5px rgba(0,0,0,0.3);"></div>`,
@@ -129,81 +121,63 @@
                         const lng = parseFloat(item.LONGITUD);
                         if (!isNaN(lat) && !isNaN(lng)) {
                             const marker = L.marker([lat, lng], { icon });
-                            marker.on('click', () => {
-                                const res = resources.get(item.CLUES) || {};
-                                onMarkerClick({ ...item, ...res });
-                            });
+                            marker.on('click', () => onMarkerClick({ ...item, ...(resources.get(item.CLUES) || {}) }));
                             markers.addLayer(marker);
                         }
                     });
                     mapRef.current.addLayer(markers);
                     markerLayerRef.current = markers;
-                    
-                    if (markers.getBounds().isValid()) {
-                        mapRef.current.fitBounds(markers.getBounds(), { padding: [40, 40] });
-                    }
+                    if (markers.getBounds().isValid()) mapRef.current.fitBounds(markers.getBounds(), { padding: [40, 40] });
                 }
-            }, [data, resources, onMarkerClick]);
+            }, [data, resources]);
 
             return <div id="map" className="shadow-2xl"></div>;
         };
 
         const ReportModal = ({ data, onClose }) => {
-            const [showResources, setShowResources] = React.useState(false);
             const streetViewUrl = `https://www.google.com/maps?layer=c&cbll=${data.LATITUD},${data.LONGITUD}&cbp=12,0,0,0,0&output=svembed`;
+            const googleMapsUrl = `https://www.google.com/maps/dir/?api=1&destination=${data.LATITUD},${data.LONGITUD}`;
 
             return (
                 <div className="modal-backdrop" onClick={onClose}>
                     <div className="modal-content" onClick={e => e.stopPropagation()}>
                         <button onClick={onClose} className="absolute top-6 right-6 text-gray-300 hover:text-red-500 text-3xl transition-colors">&times;</button>
                         
-                        <div className="mb-8">
-                            <h2 className="text-3xl font-black text-[#055A1C] leading-tight mb-2 pr-10">{data['NOMBRE DE LA UNIDAD']}</h2>
-                            <div className="flex gap-2">
+                        <div className="mb-6">
+                            <h2 className="text-2xl font-black text-[#055A1C] leading-tight mb-2 pr-10">{data['NOMBRE DE LA UNIDAD']}</h2>
+                            <div className="flex flex-wrap gap-2">
                                 <span className="bg-gray-100 text-gray-500 px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest">{data.CLUES}</span>
                                 <span className="bg-[#055A1C]/10 text-[#055A1C] px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest">{data.MUNICIPIO}</span>
                             </div>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
-                            <div className="space-y-6">
-                                <div>
-                                    <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Institución</h4>
-                                    <p className="text-sm font-bold text-gray-800 bg-gray-50 p-4 rounded-2xl border border-gray-100">{data['NOMBRE DE LA INSTITUCION']}</p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                            <div className="space-y-4">
+                                <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100">
+                                    <h4 className="text-[10px] font-black text-slate-400 uppercase mb-2">Institución</h4>
+                                    <p className="text-sm font-bold text-slate-700">{data['NOMBRE DE LA INSTITUCION']}</p>
                                 </div>
-                                <div>
-                                    <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Ubicación Geográfica</h4>
-                                    <p className="text-xs font-medium text-gray-600 leading-relaxed italic">
-                                        Lat: {data.LATITUD}, Long: {data.LONGITUD}
-                                    </p>
-                                </div>
+                                <a href={googleMapsUrl} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center w-full bg-[#055A1C] hover:bg-[#044a17] text-white py-4 px-6 rounded-2xl font-black text-xs uppercase tracking-widest transition-all shadow-lg shadow-[#055A1C]/20 group">
+                                    <svg className="w-5 h-5 mr-3 group-hover:animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7" /></svg>
+                                    Cómo Llegar (Google Maps)
+                                </a>
                             </div>
-
-                            <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
-                                <div className="flex justify-between items-center mb-4">
-                                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Recursos Médicos</h4>
-                                    <button onClick={() => setShowResources(!showResources)} className="text-[10px] font-black text-[#e6007e] uppercase">{showResources ? 'Ver menos' : 'Detalles'}</button>
-                                </div>
+                            <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 flex flex-col justify-center text-center">
+                                <h4 className="text-[10px] font-black text-slate-400 uppercase mb-4 tracking-widest">Recursos Disponibles</h4>
                                 <div className="grid grid-cols-2 gap-4">
-                                    <div className="text-center">
-                                        <p className="text-[9px] font-bold text-slate-400 uppercase">Médicos</p>
-                                        <p className="text-xl font-black text-slate-700">{data.MEDICOS_GENERALES || 0}</p>
+                                    <div>
+                                        <p className="text-[9px] font-bold text-slate-500 uppercase">Médicos</p>
+                                        <p className="text-xl font-black text-[#055A1C]">{data.MEDICOS_GENERALES || 0}</p>
                                     </div>
-                                    <div className="text-center">
-                                        <p className="text-[9px] font-bold text-slate-400 uppercase">Enfermería</p>
-                                        <p className="text-xl font-black text-slate-700">{data.ENFERMERAS || 0}</p>
+                                    <div>
+                                        <p className="text-[9px] font-bold text-slate-500 uppercase">Enfermería</p>
+                                        <p className="text-xl font-black text-[#055A1C]">{data.ENFERMERAS || 0}</p>
                                     </div>
                                 </div>
-                                {showResources && (
-                                    <div className="mt-4 pt-4 border-t border-slate-200 grid grid-cols-2 gap-2">
-                                        <p className="text-[9px] font-bold text-slate-500 uppercase">Consultorios: <span className="text-slate-800 font-black">{data.CONS_MG || 0}</span></p>
-                                        <p className="text-[9px] font-bold text-slate-500 uppercase">Especialistas: <span className="text-slate-800 font-black">{data.MEDICOS_ESP || 0}</span></p>
-                                    </div>
-                                )}
                             </div>
                         </div>
 
-                        <div className="rounded-[2rem] overflow-hidden shadow-inner border border-gray-100">
+                        <div className="rounded-3xl overflow-hidden shadow-inner border border-slate-200">
                             <iframe src={streetViewUrl} className="w-full h-64 border-0" allowFullScreen></iframe>
                         </div>
                     </div>
@@ -218,49 +192,50 @@
             const [loading, setLoading] = React.useState(true);
             const [modalData, setModalData] = React.useState(null);
             const [filters, setFilters] = React.useState({ search: '', institution: 'TODAS', municipality: 'TODOS' });
+            const [suggestions, setSuggestions] = React.useState([]);
 
             React.useEffect(() => {
                 const init = async () => {
                     try {
-                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                            await signInWithCustomToken(auth, __initial_auth_token);
-                        } else {
-                            await signInAnonymously(auth);
-                        }
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token);
+                        else await signInAnonymously(auth);
                         
-                        const cluesRef = collection(db, 'artifacts', appId, 'public', 'data', 'clues_data');
-                        onSnapshot(cluesRef, (snap) => {
-                            const data = snap.docs.map(d => d.data());
+                        onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'clues_data'), (snap) => {
+                            const data = snap.docs.map(d => cleanObject(d.data()));
                             setAllData(data);
                             setFilteredData(data);
                             setLoading(false);
                         });
 
-                        const resRef = collection(db, 'artifacts', appId, 'public', 'data', 'resources_data');
-                        onSnapshot(resRef, (snap) => {
-                            const map = new Map(snap.docs.map(d => [d.id, d.data()]));
+                        onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'resources_data'), (snap) => {
+                            const map = new Map(snap.docs.map(d => [d.id.trim().toUpperCase(), cleanObject(d.data())]));
                             setResources(map);
                         });
-                    } catch (e) { console.error("Error inicializando:", e); }
+                    } catch (e) { console.error("Error:", e); setLoading(false); }
                 };
                 init();
             }, []);
 
             React.useEffect(() => {
                 let data = allData;
-                if (filters.search) {
-                    const s = filters.search.toLowerCase();
+                const searchTerm = filters.search.toUpperCase();
+
+                if (searchTerm) {
                     data = data.filter(d => 
-                        (d.CLUES && d.CLUES.toLowerCase().includes(s)) || 
-                        (d['NOMBRE DE LA UNIDAD'] && d['NOMBRE DE LA UNIDAD'].toLowerCase().includes(s))
+                        (d.CLUES && d.CLUES.includes(searchTerm)) || 
+                        (d['NOMBRE DE LA UNIDAD'] && d['NOMBRE DE LA UNIDAD'].includes(searchTerm))
                     );
-                }
-                if (filters.institution !== 'TODAS') {
-                    data = data.filter(d => d['NOMBRE DE LA INSTITUCION'] === filters.institution);
-                }
-                if (filters.municipality !== 'TODOS') {
-                    data = data.filter(d => d['MUNICIPIO'] === filters.municipality);
-                }
+                    if (searchTerm.length > 1) {
+                        const matches = allData
+                            .filter(d => (d.CLUES && d.CLUES.includes(searchTerm)) || (d['NOMBRE DE LA UNIDAD'] && d['NOMBRE DE LA UNIDAD'].includes(searchTerm)))
+                            .slice(0, 8);
+                        setSuggestions(matches);
+                    } else setSuggestions([]);
+                } else setSuggestions([]);
+
+                if (filters.institution !== 'TODAS') data = data.filter(d => d['NOMBRE DE LA INSTITUCION'] === filters.institution);
+                if (filters.municipality !== 'TODOS') data = data.filter(d => d['MUNICIPIO'] === filters.municipality);
+                
                 setFilteredData(data);
             }, [filters, allData]);
 
@@ -269,31 +244,34 @@
                 muns: ['TODOS', ...new Set(allData.map(d => d['MUNICIPIO']))].sort()
             }), [allData]);
 
-            const chartData = React.useMemo(() => {
-                const counts = filteredData.reduce((acc, d) => {
-                    const k = d['NOMBRE DE LA INSTITUCION'] || 'OTRO';
-                    acc[k] = (acc[k] || 0) + 1; return acc;
-                }, {});
-                const sorted = Object.entries(counts).sort((a,b) => b[1] - a[1]).slice(0, 6);
-                return {
-                    labels: sorted.map(d => d[0]),
-                    datasets: [{
-                        data: sorted.map(d => d[1]),
-                        backgroundColor: ['#055A1C', '#07872c', '#09b53b', '#2ecc71', '#58d68d', '#e6007e']
-                    }]
-                };
-            }, [filteredData]);
+            const onSelectSuggestion = (item) => {
+                setFilters({ ...filters, search: item['NOMBRE DE LA UNIDAD'] });
+                setSuggestions([]);
+                setModalData({ ...item, ...(resources.get(item.CLUES) || {}) });
+            };
 
-            if (loading) return (
-                <div className="h-screen w-full flex flex-col items-center justify-center bg-white">
-                    <img src="https://d3dac9gdq8t83x.cloudfront.net/media/static/images/favicons/logo-verde.png" className="w-20 h-20 animate-pulse-soft mb-6" alt="Logo" />
-                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.4em]">Cargando Catálogo Estatal...</p>
-                </div>
-            );
+            // Función para descargar EXCEL
+            const downloadExcel = () => {
+                if (filteredData.length === 0) return;
+                
+                // Preparar los datos para Excel (unir recursos si están disponibles)
+                const excelData = filteredData.map(item => {
+                    const res = resources.get(item.CLUES) || {};
+                    return { ...item, ...res };
+                });
+
+                const worksheet = XLSX.utils.json_to_sheet(excelData);
+                const workbook = XLSX.utils.book_new();
+                XLSX.utils.book_append_sheet(workbook, worksheet, "Catálogo");
+                
+                XLSX.writeFile(workbook, `catalogo_clues_slp_${new Date().toISOString().split('T')[0]}.xlsx`);
+            };
+
+            if (loading) return <div className="h-screen w-full flex items-center justify-center font-black text-gray-400 text-xs uppercase tracking-widest animate-pulse">Sincronizando Catálogo...</div>;
 
             return (
-                <div className="min-h-screen flex flex-col">
-                    <header className="bg-white px-8 py-5 border-b border-gray-100 sticky top-0 z-40 shadow-sm flex flex-col md:flex-row justify-between items-center gap-4">
+                <div className="min-h-screen flex flex-col p-6">
+                    <header className="bg-white px-8 py-5 border-b border-gray-100 rounded-[2rem] shadow-sm mb-10 flex flex-col md:flex-row justify-between items-center gap-4">
                         <div className="flex items-center">
                             <img src="https://d3dac9gdq8t83x.cloudfront.net/media/static/images/hor-verde.png" className="h-10 mr-8" alt="SSSLP Logo" />
                             <div className="hidden lg:block border-l border-gray-100 pl-8">
@@ -303,113 +281,71 @@
                         </div>
                         <div className="text-right">
                             <p className="text-[9px] font-black text-gray-800 uppercase tracking-tight">Dirección de Planeación, Evaluación y Proyectos Especiales</p>
-                            <p className="text-[8px] font-bold text-gray-400 uppercase tracking-tighter mt-0.5 text-center md:text-right">Subdirección de Informática y Estadísticas en Salud</p>
+                            <p className="text-[8px] font-bold text-gray-400 uppercase tracking-tighter mt-0.5">Subdirección de Informática y Estadísticas en Salud</p>
                         </div>
                     </header>
 
-                    <main className="container mx-auto p-8 flex-grow">
-                        <div className="bg-amber-50 border-l-8 border-amber-400 p-6 rounded-3xl mb-10 flex items-start shadow-sm">
-                            <div className="bg-amber-400 text-white p-2 rounded-xl mr-5">
-                                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                            </div>
-                            <p className="text-[11px] font-semibold text-amber-900 leading-relaxed text-justify">
-                                La transferencia al Organismo Público Descentralizado <strong>IMSS-BIENESTAR</strong> aplica exclusivamente a las Unidades Médicas provenientes de los Servicios de Salud de San Luis Potosí, según el Convenio publicado el <strong>20 de diciembre del 2023</strong>. El resto de las unidades pertenecen a sus instituciones originarias.
-                            </p>
-                        </div>
-
-                        <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-gray-100 mb-10 grid grid-cols-1 md:grid-cols-4 gap-8 items-end">
-                            <div className="md:col-span-1">
-                                <label className="text-[10px] font-black text-gray-400 uppercase mb-3 block tracking-widest">Buscador</label>
-                                <input type="text" placeholder="Nombre de unidad o CLUES" className="w-full bg-gray-50 p-4 rounded-2xl text-sm font-bold border-0 focus:ring-4 focus:ring-[#055A1C]/10 outline-none" value={filters.search} onChange={e => setFilters({...filters, search: e.target.value})} />
+                    <main className="container mx-auto">
+                        <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-gray-100 mb-10 grid grid-cols-1 md:grid-cols-4 gap-8">
+                            <div className="relative">
+                                <label className="text-[10px] font-black text-gray-400 uppercase mb-2 block">Hospital o CLUES</label>
+                                <input type="text" placeholder="Buscar..." className="w-full bg-gray-50 p-4 rounded-2xl text-sm font-bold border-0 outline-none focus:ring-2 focus:ring-[#055A1C]/10 transition-all" value={filters.search} onChange={e => setFilters({...filters, search: e.target.value})} />
+                                {suggestions.length > 0 && (
+                                    <div className="absolute z-[100] top-full left-0 right-0 mt-2 bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden max-h-60 overflow-y-auto">
+                                        {suggestions.map((item, idx) => (
+                                            <div key={idx} onClick={() => onSelectSuggestion(item)} className="suggestion-item p-4 cursor-pointer flex flex-col border-b border-gray-50 last:border-0 transition-all">
+                                                <span className="text-xs font-black text-gray-800 line-clamp-1">{item['NOMBRE DE LA UNIDAD']}</span>
+                                                <span className="text-[10px] text-gray-400 font-bold uppercase">{item.CLUES} • {item.MUNICIPIO}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                             <div>
-                                <label className="text-[10px] font-black text-gray-400 uppercase mb-3 block tracking-widest">Institución</label>
-                                <select className="w-full bg-gray-50 p-4 rounded-2xl text-sm font-bold border-0 cursor-pointer focus:ring-4 focus:ring-[#055A1C]/10 outline-none" value={filters.institution} onChange={e => setFilters({...filters, institution: e.target.value})}>
+                                <label className="text-[10px] font-black text-gray-400 uppercase mb-2 block">Institución</label>
+                                <select className="w-full bg-gray-50 p-4 rounded-2xl text-sm font-bold border-0 outline-none" value={filters.institution} onChange={e => setFilters({...filters, institution: e.target.value})}>
                                     {lists.inst.map(i => <option key={i} value={i}>{i}</option>)}
                                 </select>
                             </div>
                             <div>
-                                <label className="text-[10px] font-black text-gray-400 uppercase mb-3 block tracking-widest">Municipio</label>
-                                <select className="w-full bg-gray-50 p-4 rounded-2xl text-sm font-bold border-0 cursor-pointer focus:ring-4 focus:ring-[#055A1C]/10 outline-none" value={filters.municipality} onChange={e => setFilters({...filters, municipality: e.target.value})}>
+                                <label className="text-[10px] font-black text-gray-400 uppercase mb-2 block">Municipio</label>
+                                <select className="w-full bg-gray-50 p-4 rounded-2xl text-sm font-bold border-0 outline-none" value={filters.municipality} onChange={e => setFilters({...filters, municipality: e.target.value})}>
                                     {lists.muns.map(m => <option key={m} value={m}>{m}</option>)}
                                 </select>
                             </div>
-                            <button onClick={() => setFilters({search: '', institution: 'TODAS', municipality: 'TODOS'})} className="h-14 bg-gray-100 text-gray-500 rounded-2xl text-[10px] font-black uppercase tracking-widest hover:bg-red-50 hover:text-red-500 transition-all">Limpiar Filtros</button>
+                            <div className="flex items-end">
+                                <button onClick={() => setFilters({search: '', institution: 'TODAS', municipality: 'TODOS'})} className="w-full h-full bg-gray-100 p-4 rounded-2xl text-[10px] font-black uppercase tracking-widest text-gray-500 hover:bg-red-50 hover:text-red-500 transition-all">Limpiar Filtros</button>
+                            </div>
                         </div>
 
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8 mb-10">
-                            <StatCard title="Total Catálogo" value={allData.length} icon={<svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>} />
-                            <StatCard title="Filtrados" value={filteredData.length} icon={<svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" /></svg>} colorClass="text-[#e6007e]" />
-                            <StatCard title="Municipios" value={new Set(filteredData.map(d => d.MUNICIPIO)).size} icon={<svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>} />
-                            <StatCard title="Instituciones" value={new Set(filteredData.map(d => d['NOMBRE DE LA INSTITUCION'])).size} icon={<svg className="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>} />
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-10">
+                            <StatCard title="Total Unidades" value={allData.length} icon={<svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>} />
+                            <StatCard title="Encontradas" value={filteredData.length} icon={<svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" /></svg>} colorClass="text-[#e6007e]" />
+                            <StatCard title="Municipios" value={new Set(filteredData.map(d => d.MUNICIPIO)).size} icon={<svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /></svg>} />
                         </div>
 
                         <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
-                            <div className="lg:col-span-2 bg-white p-8 rounded-[3rem] shadow-sm border border-gray-100">
-                                <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.3em] mb-8">Geolocalización de Unidades Médicas</h3>
+                            <div className="lg:col-span-2 bg-white p-8 rounded-[3rem] shadow-sm border border-gray-100 overflow-hidden">
                                 <MapView data={filteredData} resources={resources} onMarkerClick={setModalData} />
                             </div>
-                            <div className="space-y-10">
-                                <div className="bg-white p-10 rounded-[3rem] shadow-sm border border-gray-100">
-                                    <h3 className="text-[10px] font-black text-gray-400 uppercase tracking-[0.3em] mb-10 text-center">Distribución Institucional</h3>
-                                    <div className="chart-container">
-                                        <canvas id="chart-pie"></canvas>
-                                    </div>
-                                    <ChartUpdater data={chartData} />
-                                </div>
-                                <div className="bg-gradient-to-br from-[#055A1C] to-[#044a17] p-10 rounded-[3rem] text-white shadow-xl shadow-[#055A1C]/20">
-                                    <h3 className="text-xs font-black uppercase tracking-[0.2em] mb-4 opacity-80">Base de Datos</h3>
-                                    <p className="text-sm font-medium opacity-90 leading-relaxed mb-8">Descarga el catálogo filtrado en formato CSV para utilizarlo en Excel o herramientas de análisis de datos.</p>
-                                    <button onClick={() => {
-                                        const headers = Object.keys(filteredData[0]).join(",");
-                                        const rows = filteredData.map(d => Object.values(d).map(v => `"${v}"`).join(",")).join("\n");
-                                        const blob = new Blob(["\uFEFF" + headers + "\n" + rows], { type: 'text/csv;charset=utf-8;' });
-                                        const url = window.URL.createObjectURL(blob);
-                                        const a = document.createElement('a');
-                                        a.href = url; a.download = 'catalogo_clues_slp.csv'; a.click();
-                                    }} className="w-full py-5 bg-white/20 hover:bg-white/30 border border-white/20 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all backdrop-blur-sm">Descargar Catálogo (.csv)</button>
-                                </div>
+                            <div className="bg-gradient-to-br from-[#055A1C] to-[#044a17] p-10 rounded-[3rem] text-white shadow-xl shadow-[#055A1C]/20 flex flex-col justify-center">
+                                <h3 className="text-xs font-black uppercase tracking-[0.2em] mb-4 opacity-80">Base de Datos Excel</h3>
+                                <p className="text-sm font-medium opacity-90 leading-relaxed mb-8">Descarga el catálogo filtrado en formato .xlsx compatible con Microsoft Excel para análisis detallado.</p>
+                                <button onClick={downloadExcel} className="w-full py-5 bg-white/20 hover:bg-white/30 border border-white/20 rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all backdrop-blur-sm flex items-center justify-center">
+                                    <svg className="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a2 2 0 002 2h12a2 2 0 002-2v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                                    Descargar Excel (.xlsx)
+                                </button>
                             </div>
                         </div>
                     </main>
 
-                    <footer className="bg-white border-t border-gray-100 py-20 mt-16">
-                        <div className="container mx-auto px-8">
-                            <div className="max-w-6xl mx-auto">
-                                <div className="flex items-center space-x-8 mb-16">
-                                    <div className="flex-grow h-px bg-gray-100"></div>
-                                    <h2 className="text-sm font-black text-gray-700 uppercase tracking-[0.3em]">Responsables del Proyecto</h2>
-                                    <div className="flex-grow h-px bg-gray-100"></div>
-                                </div>
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
-                                    <ContactCard name="L.C. Omar Granados Piña" position="Director de Planeación, Evaluación y Proyectos Especiales" email="dir.planeacion@slpsalud.gob.mx" initials="OG" />
-                                    <ContactCard name="Ing. Dorian Escamilla Sauceda" position="Subdirector de Informática y Estadísticas en Salud" email="sub.informatica@slpsalud.gob.mx" initials="DE" />
-                                    <ContactCard name="Fernando Montoya Rivera" position="Desarrollador y Enlace de Información CLUES" email="clues.estadistica@slpsalud.gob.mx" initials="FM" />
-                                </div>
-                            </div>
-                        </div>
+                    <footer className="mt-16 text-center opacity-40 py-10">
+                        <p className="text-[10px] font-black uppercase tracking-widest text-gray-500">© 2026 Servicios de Salud SLP • Infraestructura Tecnológica</p>
                     </footer>
+
                     {modalData && <ReportModal data={modalData} onClose={() => setModalData(null)} />}
                 </div>
             );
-        };
-
-        const ChartUpdater = ({ data }) => {
-            const chartRef = React.useRef(null);
-            React.useEffect(() => {
-                const ctx = document.getElementById('chart-pie').getContext('2d');
-                if (chartRef.current) chartRef.current.destroy();
-                chartRef.current = new Chart(ctx, {
-                    type: 'doughnut',
-                    data: data,
-                    options: {
-                        maintainAspectRatio: false,
-                        plugins: { legend: { position: 'bottom', labels: { font: { size: 9, family: 'Montserrat', weight: '700' }, usePointStyle: true, padding: 20 } } },
-                        cutout: '70%'
-                    }
-                });
-            }, [data]);
-            return null;
         };
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
