@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Catálogo CLUES - San Luis Potosí</title>
+    <!-- Favicon institucional -->
+    <link rel="icon" type="image/png" href="https://d3dac9gdq8t83x.cloudfront.net/media/static/images/favicons/logo-verde.png">
+    
+    <!-- Librerías de Estilos y Mapas -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.4.1/dist/MarkerCluster.Default.css" />
+    <script src="https://unpkg.com/leaflet.markercluster@1.4.1/dist/leaflet.markercluster.js"></script>
+    
+    <!-- Librerías de Gráficas y React -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- Fuentes -->
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;900&display=swap" rel="stylesheet">
+    
+    <style>
+        body { font-family: 'Montserrat', sans-serif; background-color: #f8fafc; color: #1e293b; }
+        #map { height: 600px; border-radius: 1.5rem; z-index: 0; border: 1px solid #e2e8f0; }
+        .chart-container { position: relative; height: 280px; width: 100%; }
+        
+        /* Estilos de Scrollbar Personalizados */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #055A1C; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #e6007e; }
+
+        /* Modales */
+        .modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.7); z-index: 50; display: flex; justify-content: center; align-items: center; backdrop-filter: blur(8px); padding: 1rem; }
+        .modal-content { background-color: white; border-radius: 2rem; padding: 2.5rem; width: 100%; max-width: 700px; max-height: 90vh; overflow-y: auto; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); position: relative; }
+        
+        @keyframes pulse-soft { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.8; transform: scale(1.05); } }
+        .animate-pulse-soft { animation: pulse-soft 3s infinite; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // ==========================================
+        // CONFIGURACIÓN DE FIREBASE (EXTERNA)
+        // ==========================================
+        // REEMPLAZA ESTE OBJETO CON LAS CLAVES DE TU CONSOLA DE FIREBASE
+        const firebaseConfig = {
+            apiKey: "AIzaSyA-t9j1S1B1h7OXSnm90jfP6tSKDg5bm9Y",
+            authDomain: "catalogo-clues-slp.firebaseapp.com",
+            projectId: "catalogo-clues-slp",
+            storageBucket: "catalogo-clues-slp.firebasestorage.app",
+            messagingSenderId: "866205566798",
+            appId: "1:866205566798:web:50a7c3c3a1a9dbce90001f",
+            measurementId: "G-WPETZEBSX7"
+        };
+
+        const APP_ID = 'catalogo-clues-slp'; // Debe coincidir con el script de importación
+
+        // Inicializar Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // --- Componentes de Interfaz ---
+
+        const StatCard = ({ title, value, icon, colorClass = "text-[#055A1C]" }) => (
+            <div className="bg-white p-6 rounded-3xl shadow-sm border border-gray-100 flex items-center hover:shadow-lg transition-all transform hover:-translate-y-1">
+                <div className={`p-4 rounded-2xl mr-5 bg-gray-50 ${colorClass}`}>{icon}</div>
+                <div className="min-w-0">
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] truncate">{title}</p>
+                    <p className="text-2xl font-black text-gray-800">{value}</p>
+                </div>
+            </div>
+        );
+
+        const ContactCard = ({ name, position, email, initials }) => (
+            <div className="bg-white rounded-3xl shadow-sm border border-gray-100 p-6 flex items-center space-x-5 hover:border-[#055A1C]/40 transition-all group">
+                <div className="shrink-0 w-16 h-16 bg-gradient-to-br from-[#055A1C] to-[#044a17] rounded-2xl flex items-center justify-center text-white font-black text-2xl shadow-lg">{initials}</div>
+                <div className="flex-grow min-w-0">
+                    <h3 className="text-base font-black text-gray-800 truncate group-hover:text-[#055A1C]">{name}</h3>
+                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-tight mb-2 leading-tight">{position}</p>
+                    <a href={`mailto:${email}`} className="flex items-center text-[#055A1C] hover:text-[#e6007e] text-xs font-bold transition-colors">
+                        <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+                        <span className="truncate">{email}</span>
+                    </a>
+                </div>
+            </div>
+        );
+
+        const MapView = ({ data, resources, onMarkerClick }) => {
+            const mapRef = React.useRef(null);
+            const markerLayerRef = React.useRef(null);
+
+            React.useEffect(() => {
+                if (!mapRef.current) {
+                    mapRef.current = L.map('map', { center: [22.15, -100.98], zoom: 8 });
+                    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { 
+                        attribution: '&copy; OpenStreetMap' 
+                    }).addTo(mapRef.current);
+                }
+            }, []);
+
+            React.useEffect(() => {
+                if (markerLayerRef.current) mapRef.current.removeLayer(markerLayerRef.current);
+                if (data) {
+                    const markers = L.markerClusterGroup({ showCoverageOnHover: false });
+                    const icon = L.divIcon({
+                        html: `<div style="background-color: #EA4335; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 5px rgba(0,0,0,0.3);"></div>`,
+                        className: 'custom-div-icon'
+                    });
+
+                    data.forEach(item => {
+                        const lat = parseFloat(item.LATITUD);
+                        const lng = parseFloat(item.LONGITUD);
+                        if (!isNaN(lat) && !isNaN(lng)) {
+                            const marker = L.marker([lat, lng], { icon });
+                            marker.on('click', () => {
+                                const res = resources.get(item.CLUES) || {};
+                                onMarkerClick({ ...item, ...res });
+                            });
+                            markers.addLayer(marker);
+                        }
+                    });
+                    mapRef.current.addLayer(markers);
+                    markerLayerRef.current = markers;
+                    
+                    if (markers.getBounds().isValid()) {
+                        mapRef.current.fitBounds(markers.getBounds(), { padding: [40, 40] });
+                    }
+                }
+            }, [data, resources, onMarkerClick]);
+
+            return <div id="map" className="shadow-2xl"></div>;
+        };
+
+        const ReportModal = ({ data, onClose }) => {
+            const [showResources, setShowResources] = React.useState(false);
+            const streetViewUrl = `https://www.google.com/maps?layer=c&cbll=${data.LATITUD},${data.LONGITUD}&cbp=12,0,0,0,0&output=svembed`;
+
+            return (
+                <div className="modal-backdrop" onClick={onClose}>
+                    <div className="modal-content" onClick={e => e.stopPropagation()}>
+                        <button onClick={onClose} className="absolute top-6 right-6 text-gray-300 hover:text-red-500 text-3xl transition-colors">&times;</button>
+                        
+                        <div className="mb-8">
+                            <h2 className="text-3xl font-black text-[#055A1C] leading-tight mb-2 pr-10">{data['NOMBRE DE LA UNIDAD']}</h2>
+                            <div className="flex gap-2">
+                                <span className="bg-gray-100 text-gray-500 px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest">{data.CLUES}</span>
+                                <span className="bg-[#055A1C]/10 text-[#055A1C] px-3 py-1 rounded-lg text-[10px] font-black uppercase tracking-widest">{data.MUNICIPIO}</span>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+                            <div className="space-y-6">
+                                <div>
+                                    <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Institución</h4>
+                                    <p className="text-sm font-bold text-gray-800 bg-gray-50 p-4 rounded-2xl border border-gray-100">{data['NOMBRE DE LA INSTITUCION']}</p>
+                                </div>
+                                <div>
+                                    <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2">Ubicación Geográfica</h4>
+                                    <p className="text-xs font-medium text-gray-600 leading-relaxed italic">
+                                        Lat: {data.LATITUD}, Long: {data.LONGITUD}
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
+                                <div className="flex justify-between items-center mb-4">
+                                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Recursos Médicos</h4>
+                                    <button onClick={() => setShowResources(!showResources)} className="text-[10px] font-black text-[#e6007e] uppercase">{showResources ? 'Ver menos' : 'Detalles'}</button>
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div className="text-center">
+                                        <p className="text-[9px] font-bold text-slate-400 uppercase">Médicos</p>
+                                        <p className="text-xl font-black text-slate-700">{data.MEDICOS_GENERALES || 0}</p>
+                                    </div>
+                                    <div className="text-center">
+                                        <p className="text-[9px] font-bold text-slate-400 uppercase">Enfermería</p>
+                                        <p className="text-xl font-black text-slate-700">{data.ENFERMERAS || 0}</p>
+                                    </div>
+                                </div>
+                                {showResources && (
+                                    <div className="mt-4 pt-4 border-t border-slate-200 grid grid-cols-2 gap-2">
+                                        <p className="text-[9px] font-bold text-slate-500 uppercase">Consultorios: <span className="text-slate-800 font-black">{data.CONS_MG || 0}</span></p>
+                                        <p className="text-[9px] font-bold text-slate-500 uppercase">Especialistas: <span className="text-slate-800 font-black">{data.MEDICOS_ESP || 0}</span></p>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="rounded-[2rem] overflow-hidden shadow-inner border border-gray-100">
+                            <iframe src={streetViewUrl} className="w-full h-64 border-0" allowFullScreen></iframe>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [allData, setAllData] = React.useState([]);
+            const [filteredData, setFilteredData] = React.useState([]);
+            const [resources, setResources] = React.useState(new Map());
+            const [loading, setLoading] = React.useState(true);
+            const [modalData, setModalData] = React.useState(null);
+            const [filters, setFilters] = React.useState({ search: '', institution: 'TODAS', municipality: 'TODOS' });
+
+            React.useEffect(() => {
+                const init = async () => {
+                    try {
+                        await signInAnonymously(auth);
+                        
+                        // Carga de Clues
+                        const cluesRef = collection(db, 'artifacts', APP_ID, 'public', 'data', 'clues_data');
+                        onSnapshot(cluesRef, (snap) => {
+                            const data = snap.docs.map(d => d.data());
+                            setAllData(data);
+                            setFilteredData(data);
+                            setLoading(false);
+                        });
+
+                        // Carga de Recursos
+                        const resRef = collection(db, 'artifacts', APP_ID, 'public', 'data', 'resources_data');
+                        onSnapshot(resRef, (snap) => {
+                            const map = new Map(snap.docs.map(d => [d.id, d.data()]));
+                            setResources(map);
+                        });
+                    } catch (e) { console.error("Error inicializando:", e); }
+                };
+                init();
+            }, []);
+
+            React.useEffect(() => {
+                let data = allData;
+                if (filters.search) {
+                    const s = filters.search.toLowerCase();
+                    data = data.filter(d => 
+                        (d.CLUES && d.CLUES.toLowerCase().includes(s)) || 
+                        (d['NOMBRE DE LA UNIDAD'] && d['NOMBRE DE LA UNIDAD'].toLowerCase().includes(s))
+                    );
+                }
+                if (filters.institution !== 'TODAS') {
+                    data = data.filter(d => d['NOMBRE DE LA INSTITUCION'] === filters.institution);
+                }
+                if (filters.municipality !== 'TODOS') {
+                    data = data.filter(d => d['MUNICIPIO'] === filters.municipality);
+                }
+                setFilteredData(data);
+            }, [filters, allData]);
+
+            const lists = React.useMemo(() => ({
+                inst: ['TODAS', ...new Set(allData.map(d => d['NOMBRE DE LA INSTITUCION']))].sort(),
+                muns: ['TODOS', ...new Set(allData.map(d => d['MUNICIPIO']))].sort()
+            }), [allData]);
+
+            const chartData = React.useMemo(() => {
+                const counts = filteredData.reduce((acc, d) => {
+                    const k = d['NOMBRE DE LA INSTITUCION'] || 'OTRO';
+                    acc[k] = (acc[k] || 0) + 1; return acc;
+                }, {});
+                const sorted = Object.entries(counts).sort((a,b) => b[1] - a[1]).slice(0, 6);
+                return {
+                    labels: sorted.map(d => d[0]),
+                    datasets: [{
+                        data: sorted.map(d => d[1]),
+                        backgroundColor: ['#055A1C', '#07872c', '#09b53b', '#2ecc71', '#58d68d', '#e6007e']
+                    }]
+                };
+            }, [filteredData]);
+
+            if (loading) return (
+                <div className="h-screen w-full flex flex-col items-center justify-center bg-white">
+                    <img src="https://d3dac9gdq8t83x.cloudfront.net/media/static/images/favicons/logo-verde.png" className="w-20 h-20 animate-pulse-soft mb-6" alt="Logo" />
+                    <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.4em]">Cargando Catálogo Estatal...</p>
+                </div>
+            );
+
+            return (
+                <div className="min-h-screen flex flex-col">
+                    <header className="bg-white px-8 py-5 border-b border-gray-100 sticky
